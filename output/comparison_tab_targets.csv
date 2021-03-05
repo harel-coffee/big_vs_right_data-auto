@@ -1,0 +1,6 @@
+,"Logistic Regression, polynom. order=1","Log. regression, pol. ord.=1; 3 even bin target","Log. regression, pol. ord.=1; 4 even bin target"
+Administrative data vs Big data,-0.15 (p=0.0000),-0.08 (p=0.0009),-0.06 (p=0.0361)
+"Administrative data vs All data, combined",0.00 (p=0.9104),0.00 (p=0.9640),0.01 (p=0.7774)
+Age 0-14: parent and demographic vs Age 15-18: incl. middle school,0.10 (p=0.0005),0.08 (p=0.0009),0.08 (p=0.0018)
+Age 15-18: incl. middle school vs Administrative data,0.12 (p=0.0005),0.07 (p=0.0006),0.06 (p=0.0199)
+General vs Task-specific,0.18 (p=0.0000),0.09 (p=0.0009),0.06 (p=0.0151)

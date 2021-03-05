@@ -1,0 +1,300 @@
+
+import json
+import os
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+colors = '#2B8EE3', '#F9B43C', '#FA672F', '#BE1E2D', '#A7A9AC','#2B8EE3', '#F9B43C', '#FA672F', '#BE1E2D', '#A7A9AC'
+
+plt.style.use('ggplot')
+colors = [d['color'] for d in list(plt.rcParams['axes.prop_cycle'])]
+
+if os.path.exists('font/'):    
+    prop = fm.FontProperties(fname=f'font/micross.ttf')
+    mpl.rcParams['font.family'] = prop.get_name()
+
+feature_sets = json.loads(open('data/features_sets_info.json','r').read())
+feature_sets_map = dict(zip(feature_sets['labels'], feature_sets['labels_exhaust']))
+feature_sets_map_expand = dict(zip(feature_sets['labels_expand'], feature_sets['labels_exhaust_expand']))
+
+model_select = dict(
+    lr_p1 = "(clf=='LR')&(fs==True)&(poly_degree==1)",
+    lr_p2 = "(clf=='LR')&(fs==True)&(poly_degree==2)",
+    rf_nt_20md_5mss = "(clf=='RF')&(estimate_hyper_param==False)&(clf_max_depth==20)&(clf_min_samples_split==5)",
+    rf_t_fs = "(clf=='RF')&(estimate_hyper_param==True)&(fs==True)",
+    rf_t_nfs = "(clf=='RF')&(estimate_hyper_param==True)&(fs==False)")
+
+models_plot_agg = {k:v for k,v in model_select.items() if k in ['lr_p1','rf_nt_20md_5mss','rf_t_nfs']}
+
+model_map = dict(lr_p1=('Logistic Regression', 'polynom. order=1'),
+                 lr_p2=('Logistic Regression', 'polynom. order=2'),
+                 rf_nt_20md_5mss=('Random forest', 'no tuned hyperparam.'),
+                 rf_t_fs=('Random forest', 'with feat. select.'),
+                 rf_t_nfs=('Random forest', 'w/o feat. select.'))
+model_label_exhaust = {k:', '.join(v) for k,v in model_map.items()}
+
+
+data_models = pd.read_csv('output/models.txt',skiprows=4)
+data_bins = pd.read_csv('output/bins.txt',skiprows=4)
+
+data_models['feature_set_label_exhaust'] = \
+    pd.Categorical(data_models.feature_set_label.map(feature_sets_map),
+                   categories=feature_sets['labels_exhaust'],
+                   ordered=True)
+
+# feature groupings
+feature_groups = dict(
+    major = ['combined_all','pre_all','post_all'],
+    expanding = ['pre_all', 'pre_elem_and_elem','pre_elem'],
+    task=['task', 'non_task'],
+    all_feat_sets=feature_sets['labels'])
+
+feature_group_letter = dict(major='A',expanding='C',task='B')
+
+comparison_sets = dict(
+    major = [('pre_all', 'post_all'), ('pre_all', 'combined_all')],
+    expanding = [('pre_elem', 'pre_elem_and_elem'), ('pre_elem_and_elem', 'pre_all')],
+    all_feat_sets = [('pre_elem_and_elem', 'post_all')],
+    task=[('non_task','task')])
+
+for acronym, selection in model_select.items():    
+    data_models.loc[data_models.query(selection).index, 'Model'] = ' - '.join(model_map[acronym])
+
+
+from scipy.stats import t, gaussian_kde
+
+os.makedirs('output/', exist_ok=True)
+
+mean_acc = {}
+comparison_df = {model_label_exhaust[v]:{} for v in models_plot_agg.keys()}
+acc_dict = {}
+
+models_plot = {k:v for k,v in model_select.items() if k in models_plot_agg.keys()}
+
+for model_label, selection in models_plot.items():
+
+    mle = model_label_exhaust[model_label]
+    mean_acc[mle]=\
+        data_models\
+            .query(selection)\
+            .groupby('feature_set_label_exhaust')\
+            .accuracy\
+            .mean()
+    
+    
+    acc_gb_fs = \
+        data_models\
+        .query(selection)\
+        .groupby('feature_set_label_exhaust').accuracy
+    
+    acc_fs_agg =acc_gb_fs.agg(['mean', 'std'])
+    acc_fs_agg.index = \
+        [s.replace('\n', ' ') for s in acc_fs_agg.index.tolist()]
+    acc_dict[mle] = acc_fs_agg
+    
+    for feature_group, comparison_set_ in feature_groups.items():
+        
+        label = '%s_%s' % (feature_group, model_label)
+
+        ####################
+        # data structuring #
+        ####################
+        compare_selection = data_models.feature_set_label.isin(comparison_set_)        
+        df = data_models.loc[compare_selection].query(selection).copy()
+
+        # features
+        fs_map = feature_sets_map
+        fs_exhaust = feature_sets['labels_exhaust']
+        if feature_group=='expanding':
+            fs_map = feature_sets_map_expand
+            fs_exhaust = feature_sets['labels_exhaust_expand']
+
+        fs_exhaust_sub = df.feature_set_label.map(fs_map)
+
+        df['fs_long'] = \
+            pd.Categorical(fs_exhaust_sub,
+                           categories=[f for f in fs_exhaust if f in fs_exhaust_sub.unique()],
+                           ordered=True)
+        df_idx = df.set_index('feature_set_label')
+
+        # table agg
+        for set1, set2 in comparison_sets[feature_group]:
+            diff = df_idx.loc[set2].accuracy.values-df_idx.loc[set1].accuracy.values
+            mu, std, corr = diff.mean(), diff.std(), np.sqrt(1/1000+1/3)
+            t_corr = mu/(corr*std)
+            p_corr = t.sf(np.abs(t_corr),1000-1)*2
+            comparison_pair = '%s vs %s' % (feature_sets_map[set1], feature_sets_map[set2])
+            cp = comparison_pair.replace('\n', ' ')
+            comparison_df[mle][cp] = '%.2f (p=%.4f)'% (mu, p_corr)
+
+
+        # figure output
+        figpath = 'output/%s_letter.png' % label
+        if not os.path.exists(figpath):
+            has_x_label = feature_group == 'expanding'#in ('task', 'major')
+            f,ax = plt.subplots(figsize=(6,0.8+0.6*len(comparison_set_)+0.2*has_x_label))
+
+            sub = df.reset_index().pipe(lambda df: df[df.feature_set_label.isin(comparison_set_)])
+
+            if feature_group == 'expanding':
+                colors_ = sns.light_palette(colors[1],n_colors=4)[1:][::-1]        
+            elif feature_group == 'task':
+                colors_ = colors[3:]
+            elif feature_group == 'major':
+                colors_ = [colors[i] for i in  [2,1,0]]
+            else:
+                colors_ = colors
+
+            # make KDE part
+            n = len(comparison_set_)
+            pos = list(range(1,n+1))
+            accs = [sub[sub.feature_set_label==fs].accuracy.values for fs in comparison_set_]
+            widths = [] 
+            for fs in feature_groups[feature_group]:
+                acc = df[df.feature_set_label==fs].accuracy
+                kde = gaussian_kde(acc)
+                widths.append(kde(acc).max()/12)
+            parts = ax.violinplot(accs, pos, widths=widths, vert=False, showextrema=False) 
+            ax.set_yticks(pos)
+            ax.set_yticklabels([fs_map[fs] for fs in comparison_set_])
+            for i, pc in enumerate(parts['bodies']):
+                if feature_group!='all_feat':
+                    pc.set_color(colors_[i])
+                pc.set_edgecolor('black')
+                pc.set_alpha(1)
+
+            # make box plot part (quantiles)
+            m,q05,q10,q25,q50,q75,q90,q95,M = np.quantile(accs,[0,.05,.1,.25,.5,.75,.9,.95,1],1)
+            ax.hlines(pos, q10, q90, color='k', lw=1.5)
+            ax.hlines(pos, q25, q75, color='k', lw=7)
+            ax.scatter(q50,pos,color='white',marker='o',s=20,zorder=3)
+
+            # shared
+            ax.set_ylabel('')
+            ax.axvline(x=0.3333, color='gray',linestyle='--')
+            ax.set_xlim(0.2, 0.8)
+            if has_x_label:
+                ax.set_xlabel('Balanced accuracy')
+                plt.subplots_adjust(bottom=.2)
+            else:
+                ax.set_xlabel('')
+            ax.yaxis.grid(False)    
+
+            plt.subplots_adjust(left=.24)
+
+            if feature_group in feature_group_letter:
+                ax.text(0.03,0.33+n, feature_group_letter[feature_group], size=24)
+
+            f.savefig(figpath)
+            f.savefig(figpath.replace('png','pdf'))
+
+from IPython.display import Image, display
+display(Image('output/major_lr_p1_letter.png'))
+display(Image('output/task_lr_p1_letter.png'))
+display(Image('output/expanding_lr_p1_letter.png'))
+
+feature_sets = json.loads(open('data/features_sets_info.json','r').read())
+
+for i, label in enumerate(feature_sets['labels'][:3]):    
+    f,ax = plt.subplots(1,2,figsize=(12,4))
+    ax[0].set_xlabel('Ridge parameter, log scaled (=$\log_{10}(\lambda_2))$')
+    ax[1].set_xlabel('Number of features used')
+    plotdata_ = data_models.query(f'(feature_set_label=="{label}")&(clf=="LR")&(poly_degree==1)')
+    plotdata_\
+        .loc[:,'hyperparam_clf__C']\
+        .pipe(np.log10)\
+        .plot\
+        .hist(ax=ax[0],bins=20)
+    plotdata_\
+        .loc[:,'hyperparam_fs__max_features']\
+        .value_counts()\
+        .sort_index()\
+        .plot(ax=ax[1])
+    
+    ax[1].set_xlim(1,31)
+    
+    f.suptitle(feature_sets['labels_exhaust'][i])
+    
+
+f,ax = plt.subplots(figsize=(12,4))
+selection = "feature_set_label=='combined_all'"
+sns.violinplot('Model', 'accuracy', data=data_models.query(selection), ax=ax)
+ax.set_ylabel('Weighted accuracy')
+ax.set_xticklabels(ax.get_xticklabels(),rotation=8) 
+f.savefig('output/all_models__combined_feat.pdf')
+
+
+display(Image('output/major_rf_nt_20md_5mss_letter.png'))
+display(Image('output/task_rf_nt_20md_5mss_letter.png'))
+display(Image('output/expanding_rf_nt_20md_5mss_letter.png'))
+
+from IPython.display import Image, display
+display(Image('output/major_rf_t_nfs_letter.png'))
+display(Image('output/task_rf_t_nfs_letter.png'))
+display(Image('output/expanding_rf_t_nfs_letter.png'))
+
+acc_tab = pd.concat(acc_dict,axis=1).round(3)
+acc_tab.columns = \
+    pd.MultiIndex.from_arrays(arrays=[acc_tab.columns.get_level_values(0),['Mean', 'Std. Dev.']*len(acc_dict)],
+                              names=['Model', 'Measure'])
+acc_tab.to_csv('output/acc_tab.csv')
+acc_tab.index.name = 'Feature set'
+acc_tab_tex = acc_tab\
+                    .to_latex()\
+                    .replace('\\toprule','\\hline\\hline')\
+                    .replace('\\midrule','\\hline')\
+                    .replace('\\bottomrule','\\hline\\hline')\
+                    .replace('\\textbackslash n','')
+
+with open('output/acc_tab.tex', 'w') as f:
+    f.write(acc_tab_tex)
+    
+acc_tab    
+
+comparison_tab = pd.DataFrame(comparison_df)
+comparison_tab.to_csv('output/comparison_tab_p.csv')
+comparison_tex = comparison_tab\
+                    .to_latex()\
+                    .replace('\\toprule','\\hline\\hline')\
+                    .replace('\\midrule','\\hline')\
+                    .replace('\\bottomrule','\\hline\\hline')
+
+with open('output/comparison_tab_p.tex', 'w') as f:
+    f.write(comparison_tex)
+    
+comparison_tab    
+
+data_bins['Feature set'] = data_bins.feature_set_label\
+    .map({k:v.replace('\n', ' ') for k,v in feature_sets_map.items()})
+data_bins['Target binning'] = data_bins.bins
+acc_target_tab = \
+    data_bins\
+        .groupby(['Target binning', 'Feature set'])\
+        .accuracy\
+        .agg(['mean', 'std'])\
+        .round(3)\
+        .stack()\
+        .unstack(level=[0,2])\
+
+
+acc_target_tab.columns = pd.MultiIndex.from_arrays([['Even']*2+['Uneven']*2+['Even']*4, 
+                           [3]*4+[4,4,5,5],['Mean', 'Std. Dev.']*4],names=['Bin size', 'Number of bins', "Measure"])
+acc_target_tab =\
+    acc_target_tab.sort_index(level=[0,1,2],ascending=[False,True,True],axis=1)\
+                  .loc[[v.replace('\n', ' ') for k,v in feature_sets_map.items()]]
+acc_target_tab_tex = \
+    acc_target_tab\
+        .to_latex()\
+        .replace('\\toprule','\\hline\\hline')\
+        .replace('\\midrule','\\hline')\
+        .replace('\\bottomrule','\\hline\\hline')\
+        .replace('\\textbackslash n','')
+with open('output/acc_tab_bins.tex', 'w') as f:
+    f.write(acc_target_tab_tex)
+
+acc_target_tab

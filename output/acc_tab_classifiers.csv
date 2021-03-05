@@ -1,0 +1,9 @@
+Model,"Logistic Regression, polynom. order=1","Logistic Regression, polynom. order=1","Logistic Regression, polynom. order=2","Logistic Regression, polynom. order=2","Random forest, fixed hyperparam. (max_depth,20; min_sample_split,5)","Random forest, fixed hyperparam. (max_depth,20; min_sample_split,5)","Random forest, w/o feat. select.","Random forest, w/o feat. select."
+Feature set,Mean,Std. Dev.,Mean,Std. Dev.,Mean,Std. Dev.,Mean,Std. Dev.
+Big data,0.426,0.034,0.375,0.046,0.411,0.029,0.44,0.039
+Administrative data,0.576,0.045,0.552,0.064,0.487,0.04,0.508,0.048
+"All data, combined",0.579,0.047,0.534,0.072,0.488,0.039,0.523,0.047
+Age 0-14: parent and demographic,0.364,0.021,0.366,0.022,0.366,0.028,0.366,0.029
+Age 15-18: incl. middle school,0.46,0.046,0.377,0.035,0.409,0.034,0.416,0.037
+Task-specific,0.601,0.048,0.583,0.048,0.488,0.04,0.511,0.049
+General,0.418,0.037,0.374,0.044,0.413,0.028,0.443,0.04
